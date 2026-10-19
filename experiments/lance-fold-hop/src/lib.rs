@@ -54,7 +54,7 @@ pub mod lance {
         if mask.len() != words_for(rows) {
             return false;
         }
-        if rows == 0 || rows.is_multiple_of(64) {
+        if rows == 0 || rows % 64 == 0 {
             return true;
         }
         mask.last()
@@ -155,7 +155,7 @@ pub mod lance {
 mod tests {
     use super::lance::{one_hop, EdgeColumns, HopError, Snapshot};
     use lance_graph_mask_risc::words_for;
-    use petgraph::{graph::DiGraph, visit::Bfs};
+    use petgraph::{graph::{DiGraph, NodeIndex}, visit::Bfs};
     use std::collections::BTreeSet;
 
     fn mask(rows: usize, present: &[usize]) -> Vec<u64> {
@@ -188,11 +188,11 @@ mod tests {
                 && ((visible[src / 64] >> (src % 64)) & 1) != 0
                 && ((visible[dst / 64] >> (dst % 64)) & 1) != 0
             {
-                graph.add_edge(src.into(), dst.into(), ());
+                graph.add_edge(NodeIndex::new(src), NodeIndex::new(dst), ());
             }
         }
-        let mut bfs = Bfs::new(&graph, seed.into());
-        assert_eq!(bfs.next(&graph), Some(seed.into()));
+        let mut bfs = Bfs::new(&graph, NodeIndex::new(seed));
+        assert_eq!(bfs.next(&graph), Some(NodeIndex::new(seed)));
         bfs.stack.iter().map(|id| id.index()).collect()
     }
 
