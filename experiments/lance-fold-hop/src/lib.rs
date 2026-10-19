@@ -12,64 +12,16 @@
 
 #[cfg(feature = "lance")]
 pub mod lance {
-    use lance_graph_mask_risc::{
-        execute_into, words_for, Foreign, ForeignPlane, LaneRef, MaskOp, Operand,
-        Out, Planes, Program, Scratch, Terminal,
+    use lance_graph_mask_risc::{words_for, Scratch};
+    pub use lance_graph_mask_risc::{
+        EdgeColumns, GraphSnapshot as Snapshot, HopError, OutgoingHop,
     };
 
-    /// Edges are not a second graph object: these are borrowed SoA columns.
-    /// Row IDs are local positions, not canonical thought GUIDs.
-    #[derive(Clone, Copy)]
-    pub struct EdgeColumns<'a> {
-        pub sources: &'a [u32],
-        pub targets: &'a [u32],
-    }
-
-    /// A selected witness version over one stable row order.
-    #[derive(Clone, Copy)]
-    pub struct Snapshot<'a> {
-        pub witness_version: u64,
-        pub node_rows: usize,
-        /// LSB-first, one bit per node. Scope authorization is already applied.
-        pub visible_nodes: &'a [u64],
-        /// LSB-first, one bit per edge, selected at this witness version.
-        pub live_edges: &'a [u64],
-    }
-
-    #[derive(Debug, PartialEq, Eq)]
-    pub enum HopError {
-        StaleWitness,
-        InvalidShape,
-        InvalidSeed,
-        InvisibleSeed,
-        Executor(String),
-    }
-
-    fn contains(mask: &[u64], row: usize) -> bool {
-        mask.get(row / 64)
-            .is_some_and(|word| (word & (1u64 << (row % 64))) != 0)
-    }
-
-    fn valid_tail(mask: &[u64], rows: usize) -> bool {
-        if mask.len() != words_for(rows) {
-            return false;
-        }
-        if rows == 0 || rows % 64 == 0 {
-            return true;
-        }
-        mask.last()
-            .is_some_and(|word| (word >> (rows % 64)) == 0)
-    }
-
-    /// Execute one scoped, witness-pinned outgoing adjacency fold.
+    /// Convenience shape for the fork's existing single-seed BFS differential.
     ///
-    /// The only query evaluator is Mask-RISC: an edge-presence-gated Gather
-    /// from the source frontier, a visibility-gated Gather through target IDs,
-    /// and ScatterOrU32 into the *demanded* one-hop result plane.
-    ///
-    /// An implementation of repeat/iterative BFS must add an explicit
-    /// continuation contract upstream rather than quietly reusing the result
-    /// as an undocumented intermediate.
+    /// All graph execution and authorization live in lance-graph's reusable
+    /// OutgoingHop kernel. This fork constructs only the requested seed mask,
+    /// owns temporary memory, and translates the single-seed error vocabulary.
     pub fn one_hop(
         edges: EdgeColumns<'_>,
         snapshot: Snapshot<'_>,
@@ -79,75 +31,29 @@ pub mod lance {
         if snapshot.witness_version != expected_witness {
             return Err(HopError::StaleWitness);
         }
-        if snapshot.node_rows > u32::MAX as usize
-            || edges.sources.len() != edges.targets.len()
-            || !valid_tail(snapshot.visible_nodes, snapshot.node_rows)
-            || !valid_tail(snapshot.live_edges, edges.sources.len())
-            || edges.sources.iter().chain(edges.targets.iter()).any(
-                |&id| id as usize >= snapshot.node_rows
-            )
-        {
-            return Err(HopError::InvalidShape);
-        }
+        let kernel = OutgoingHop::new(edges.sources.len(), snapshot.node_rows)?;
         if seed >= snapshot.node_rows {
             return Err(HopError::InvalidSeed);
         }
-        if !contains(snapshot.visible_nodes, seed) {
+        if !snapshot.visible_nodes.get(seed / 64).is_some_and(|word| {
+            (word & (1u64 << (seed % 64))) != 0
+        }) {
             return Err(HopError::InvisibleSeed);
         }
-
-        let mut frontier = vec![0u64; words_for(snapshot.node_rows)];
+        let mut frontier = vec![0; words_for(snapshot.node_rows)];
         frontier[seed / 64] |= 1u64 << (seed % 64);
-        let mut targets = vec![0u64; words_for(snapshot.node_rows)];
-
-        if edges.sources.is_empty() {
-            return Ok(targets);
-        }
-
-        let planes_masks = [snapshot.live_edges];
-        let lanes = [
-            LaneRef::U32(edges.sources),
-            LaneRef::U32(edges.targets),
-        ];
-        let planes = Planes {
-            n_rows: edges.sources.len(),
-            masks: &planes_masks,
-            lanes: &lanes,
-        };
-        let foreign_planes = [
-            ForeignPlane { words: &frontier, rows: snapshot.node_rows },
-            ForeignPlane { words: snapshot.visible_nodes, rows: snapshot.node_rows },
-        ];
-        let foreign = Foreign { planes: &foreign_planes, lanes: &[] };
-        let program = Program::new(
-            vec![
-                MaskOp::Gather {
-                    lane: 0,
-                    foreign: 0,
-                    under: Some(Operand::Plane(0)),
-                    dst: 0,
-                },
-                MaskOp::Gather {
-                    lane: 1,
-                    foreign: 1,
-                    under: Some(Operand::Scratch(0)),
-                    dst: 1,
-                },
-            ],
-            Terminal::ScatterOrU32 {
-                mask: Operand::Scratch(1),
-                lane: 1,
-                out_rows: snapshot.node_rows as u32,
-            },
-        );
-        let mut scratch = Scratch::for_program(&program, edges.sources.len())
-            .map_err(|error| HopError::Executor(format!("{error:?}")))?;
-        execute_into(
-            &program, &planes, &foreign, &mut scratch, Out::Mask(&mut targets),
-        )
-        .map_err(|error| HopError::Executor(format!("{error:?}")))?;
-
-        Ok(targets)
+        let mut out = vec![0; words_for(snapshot.node_rows)];
+        let mut scratch = Scratch::for_program(kernel.program(), edges.sources.len())
+            .map_err(HopError::Executor)?;
+        kernel.run(
+            edges,
+            snapshot,
+            &frontier,
+            expected_witness,
+            &mut scratch,
+            &mut out,
+        )?;
+        Ok(out)
     }
 }
 
@@ -297,4 +203,53 @@ mod tests {
             snapshot, 0, 1,
         ), Err(HopError::InvalidShape));
     }
+    #[test]
+    fn multi_seed_bfs_layer_uses_upstream_kernel_and_reusable_scratch() {
+        use lance_graph_mask_risc::{OutgoingHop, Scratch};
+
+        let edges = [(0, 1), (0, 65), (65, 129), (65, 70)];
+        let sources: Vec<u32> = edges.iter().map(|e| e.0).collect();
+        let targets: Vec<u32> = edges.iter().map(|e| e.1).collect();
+        let visible = mask(130, &(0..130).collect::<Vec<_>>());
+        let live = mask(edges.len(), &(0..edges.len()).collect::<Vec<_>>());
+        let frontier = mask(130, &[0, 65]);
+        let kernel = OutgoingHop::new(edges.len(), 130).unwrap();
+        let mut scratch = Scratch::for_program(kernel.program(), edges.len()).unwrap();
+        let mut out = vec![u64::MAX; words_for(130)];
+
+        let snapshot = Snapshot {
+            witness_version: 15, node_rows: 130,
+            visible_nodes: &visible, live_edges: &live,
+        };
+        kernel.run(
+            EdgeColumns { sources: &sources, targets: &targets },
+            snapshot, &frontier, 15, &mut scratch, &mut out,
+        ).unwrap();
+        let want: BTreeSet<usize> = [0usize, 65usize].iter()
+            .flat_map(|&seed| {
+                petgraph_first_bfs_layer(130, &edges, &live, &visible, seed)
+            })
+            .collect();
+        assert_eq!(ids(&out, 130), want);
+
+        // Reuse the same plan and scratch on a second witness. The third
+        // edge disappeared; stable node ordinals have not changed.
+        let modified_live = mask(edges.len(), &[0, 1, 3]);
+        let second = Snapshot {
+            witness_version: 16, live_edges: &modified_live, ..snapshot
+        };
+        kernel.run(
+            EdgeColumns { sources: &sources, targets: &targets },
+            second, &frontier, 16, &mut scratch, &mut out,
+        ).unwrap();
+        let want: BTreeSet<usize> = [0usize, 65usize].iter()
+            .flat_map(|&seed| {
+                petgraph_first_bfs_layer(
+                    130, &edges, &modified_live, &visible, seed,
+                )
+            })
+            .collect();
+        assert_eq!(ids(&out, 130), want);
+    }
+
 }
