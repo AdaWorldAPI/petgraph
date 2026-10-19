@@ -1,0 +1,18 @@
+[package]
+name = "petgraph-lance-fold-hop"
+version = "0.0.1"
+edition = "2024"
+publish = false
+description = "Fork-first differential one-hop execution on lance-graph Mask-RISC"
+
+# Deliberately isolated: compiling the petgraph workspace must never
+# pull in the lance-graph/ndarray substrate.
+[workspace]
+
+[features]
+default = []
+lance = ["dep:lance-graph-mask-risc"]
+
+[dependencies]
+petgraph = { path = "../../crates/petgraph", default-features = false, features = ["std"] }
+lance-graph-mask-risc = { git = "https://github.com/AdaWorldAPI/lance-graph", rev = "b10e46a134c8429b32bafe1d8a463678f8844816", optional = true }
