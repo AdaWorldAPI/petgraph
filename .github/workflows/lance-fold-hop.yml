@@ -1,0 +1,22 @@
+name: Lance fold hop probe
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'experiments/lance-fold-hop/**'
+      - '.github/workflows/lance-fold-hop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lance-fold-hop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Test direct Mask-RISC hop against petgraph BFS
+        run: cargo test --manifest-path experiments/lance-fold-hop/Cargo.toml --features lance --verbose
