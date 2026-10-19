@@ -1,0 +1,8 @@
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+
+# This is the fork's tested development/CI toolchain, NOT the minimum
+# supported Rust version of upstream petgraph. The latter remains 1.85
+# in Cargo.toml until an actual public API needs a newer compiler.
