@@ -208,8 +208,8 @@ mod tests {
         use lance_graph_mask_risc::{OutgoingHop, Scratch};
 
         let edges = [(0, 1), (0, 65), (65, 129), (65, 70)];
-        let sources: Vec<u32> = edges.iter().map(|e| e.0).collect();
-        let targets: Vec<u32> = edges.iter().map(|e| e.1).collect();
+        let sources: Vec<u32> = edges.iter().map(|e| e.0 as u32).collect();
+        let targets: Vec<u32> = edges.iter().map(|e| e.1 as u32).collect();
         let visible = mask(130, &(0..130).collect::<Vec<_>>());
         let live = mask(edges.len(), &(0..edges.len()).collect::<Vec<_>>());
         let frontier = mask(130, &[0, 65]);
