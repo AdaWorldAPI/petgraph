@@ -1,0 +1,2 @@
+# This experiment is rust-version 1.99 (see Cargo.toml), not the fork crates' 1.85.
+msrv = "1.99"

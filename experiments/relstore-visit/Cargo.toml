@@ -1,0 +1,27 @@
+[package]
+name = "petgraph-relstore-visit"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+description = "D-RST-3: a borrowed, version-pinned pattern-CSR view that petgraph's unmodified BFS/DFS traverse"
+
+# Isolated on purpose, like experiments/lance-fold-hop: building the petgraph
+# workspace never pulls in lance-graph. The `quack` feature is the only way the
+# substrate enters, and it is off by default.
+[workspace]
+
+[features]
+default = []
+# The F2b-shaped falsifier: a Quack compiled one-hop over the SAME prepared
+# buffers. Pinned to lance-graph main at the D-RMAP-1 merge (fcd1f60e).
+quack = ["dep:lance-graph-quack", "dep:lance-graph-mask-risc"]
+
+[dependencies]
+petgraph = { path = "../../crates/petgraph", default-features = false, features = ["std"] }
+fixedbitset = { version = "0.5.7", default-features = false }
+lance-graph-quack = { git = "https://github.com/AdaWorldAPI/lance-graph", rev = "fcd1f60ea863da56a18032baf3989b9aae0e8c02", optional = true }
+lance-graph-mask-risc = { git = "https://github.com/AdaWorldAPI/lance-graph", rev = "fcd1f60ea863da56a18032baf3989b9aae0e8c02", optional = true }
+
+[[example]]
+name = "relstore_cost"
