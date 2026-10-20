@@ -57,6 +57,18 @@ oracle must then visit in exactly the same order.
 - `quack`: for every node, the Quack hop equals the view's neighbours, reads
   the same `dst` buffer at the same version, and the store prepared once.
 
+Disable runs (each guard broken alone, its test red, then restored):
+
+| guard broken | test that failed |
+|---|---|
+| destination domain check removed | `an_out_of_domain_endpoint_is_refused_never_dropped` |
+| stale-version check removed | `a_view_is_refused_for_any_other_version` |
+| duplicate-id check removed | `duplicate_fact_ids_are_refused` |
+| rows ordered by `src` only (arrival order within a source) | `fact_ids_survive_reordering_and_compaction_rows_do_not` |
+| view holds a copy of `dst` | `the_view_borrows_and_allocates_nothing` |
+| edge id = physical row | `fact_ids_survive_reordering_and_compaction_rows_do_not` |
+| Quack hop reads a copy of `dst` | `petgraph_and_quack_read_one_prepared_layout` |
+
 ## Measurements (`examples/relstore_cost.rs`)
 
 Release, one machine, medians of 7; ranges over three runs. Random relation,
